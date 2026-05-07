@@ -175,6 +175,7 @@ class ProfitMapperClient:
                 await page.goto(f"{self.base_url}/inventory-checker")
 
                 print("Waiting for you to sign in...")
+                # Wait for the OAuth callback to land back on profit-mapper
                 try:
                     await page.wait_for_url(
                         f"{self.base_url}/**",
@@ -183,8 +184,19 @@ class ProfitMapperClient:
                 except Exception:
                     pass
 
-                # Wait for page to fully load and any auth redirects to settle
-                await asyncio.sleep(5)
+                # Auth.js (NextAuth) sets the session cookie AFTER the OAuth
+                # callback completes. Wait for it specifically.
+                print("Waiting for session cookie...")
+                for _ in range(20):  # up to ~20 seconds
+                    await asyncio.sleep(1)
+                    cookies = await context.cookies()
+                    cookie_names = [c["name"] for c in cookies]
+                    if any("session" in n.lower() for n in cookie_names):
+                        print("Session cookie detected!")
+                        break
+                else:
+                    # Give it a final generous wait
+                    await asyncio.sleep(5)
 
                 # Navigate to an inventory page to trigger API calls so we can
                 # capture the real auth mechanism
@@ -196,9 +208,10 @@ class ProfitMapperClient:
                     except Exception:
                         pass
 
-                # Grab ALL cookies (not just profit-mapper domain)
+                # Grab ALL cookies from profit-mapper domain
                 all_cookies = await context.cookies()
                 raw_cookies = []
+                session_cookie_found = False
                 for cookie in all_cookies:
                     domain = cookie.get("domain", "")
                     if "profit-mapper" in domain or "profit_mapper" in domain:
@@ -210,6 +223,14 @@ class ProfitMapperClient:
                             "secure": cookie.get("secure", False),
                             "httpOnly": cookie.get("httpOnly", False),
                         })
+                        if "session" in cookie["name"].lower():
+                            session_cookie_found = True
+                            logger.info(f"Session cookie: {cookie['name']}")
+
+                if not session_cookie_found:
+                    print("WARNING: No session cookie found! Auth may not have completed.")
+                    print(f"Cookies captured: {[c['name'] for c in raw_cookies]}")
+                    print("Try running --login again and wait for the page to fully load.")
 
                 # Also grab localStorage tokens
                 local_storage = {}
@@ -395,43 +416,101 @@ class ProfitMapperClient:
             return False
 
     async def check_inventory(self, mapper_url: str) -> MapperResult:
+        """
+        Check inventory via Profit Mapper's internal API.
+
+        Parses the retailer and SKU from the mapper URL, then calls
+        /api/crawler/stores/crawl directly. Fast — no browser needed.
+        """
         result = MapperResult()
 
         if not self._authenticated:
             result.error = "Not authenticated"
             return result
 
-        # If we know the site is an SPA, use Playwright directly
-        if self._use_playwright_for_checks:
-            return await self._check_inventory_playwright(mapper_url)
+        # Extract retailer slug and SKU from mapper URL
+        # e.g. https://profit-mapper.com/inventory-checker/hd?sku=317991357
+        import re
+        url_match = re.search(
+            r'/inventory-checker/(\w+)\?(?:sku|upc|productId)=(\w+)',
+            mapper_url,
+        )
+        if not url_match:
+            result.error = f"Could not parse retailer/SKU from URL: {mapper_url}"
+            return result
 
-        # Try aiohttp first, fall back to Playwright if we get an empty page
+        source_code = url_match.group(1)
+        product_id = url_match.group(2)
+
+        api_url = (
+            f"{self.base_url}/api/crawler/stores/crawl"
+            f"?sourceCode={source_code}&productId={product_id}"
+            f"&radius={self.radius}&v=1"
+        )
+
         try:
-            url = self._build_url(mapper_url)
-            logger.debug(f"Checking inventory: {url}")
-
-            async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            logger.debug(f"API check: {api_url}")
+            async with self.session.get(
+                api_url,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                if resp.status == 401 or resp.status == 403:
+                    self._authenticated = False
+                    result.error = "Session expired"
+                    return result
                 if resp.status != 200:
-                    result.error = f"HTTP {resp.status}"
+                    result.error = f"API HTTP {resp.status}"
                     return result
 
-                html = await resp.text()
-                result = self._parse_inventory_page(html, mapper_url)
-
-                # If HTML parsing returned no stores, the page may be SPA-rendered
-                if not result.stores and not result.error:
-                    logger.info("No stores from HTML parse, trying Playwright fallback")
-                    return await self._check_inventory_playwright(mapper_url)
-
-                return result
+                data = await resp.json()
+                return self._parse_crawl_api(data, mapper_url)
 
         except asyncio.TimeoutError:
             result.error = "Request timed out"
             return result
         except Exception as e:
             result.error = str(e)
-            logger.error(f"Inventory check failed: {e}")
+            logger.error(f"Inventory API check failed: {e}")
             return result
+
+    def _parse_crawl_api(self, data: dict, original_url: str) -> MapperResult:
+        """Parse the /api/crawler/stores/crawl response."""
+        result = MapperResult()
+        result.product_name = data.get("title", "")
+        result.msrp = data.get("msrp")
+        result.upc = data.get("upc")
+        result.sku = data.get("id") or data.get("itemNumber")
+        result.product_image_url = (data.get("images") or [""])[0]
+
+        # Amazon/Keepa data
+        amazon = data.get("amazon", {})
+        if amazon and amazon.get("found"):
+            result.keepa_data_available = True
+            parsed = amazon.get("parsed", {})
+            result.amazon_price = parsed.get("buyBox")
+
+        # Stores
+        stores_list = data.get("stores", [])
+        for s in stores_list:
+            store = StoreInventory(
+                store_name=s.get("storeName", s.get("name", "")),
+                address=s.get("address", ""),
+                city=s.get("city", ""),
+                state=s.get("state", ""),
+                zip_code=str(s.get("zipCode", s.get("zip", ""))),
+                quantity=_int(s.get("quantity", s.get("qty", s.get("onHand", 0)))),
+                in_store_price=s.get("price", s.get("inStorePrice")),
+                msrp=s.get("msrp"),
+                percent_off=s.get("percentOff", s.get("discount")),
+                distance_miles=s.get("distance", s.get("distanceMiles")),
+                pickup_available=s.get("pickupAvailable", s.get("bopusEligible", False)),
+                aisle_bay=s.get("aisle", s.get("bay", s.get("location", ""))),
+            )
+            result.stores.append(store)
+
+        result.total_stores_checked = len(result.stores)
+        self._detect_retailer(result, original_url)
+        return result
 
     async def _check_inventory_playwright(self, mapper_url: str) -> MapperResult:
         """Use Playwright to load the inventory page (handles SPA rendering)."""
@@ -456,12 +535,17 @@ class ProfitMapperClient:
                         if raw_cookies:
                             pw_cookies = []
                             for c in raw_cookies:
+                                # Use url-based cookie setting for all cookies
+                                # to avoid domain format issues with __Host-/__Secure- prefixes
                                 pw_cookie = {
                                     "name": c["name"],
                                     "value": c["value"],
-                                    "domain": c.get("domain", ".profit-mapper.com"),
-                                    "path": c.get("path", "/"),
+                                    "url": self.base_url,
                                 }
+                                if c.get("secure"):
+                                    pw_cookie["secure"] = True
+                                if c.get("httpOnly"):
+                                    pw_cookie["httpOnly"] = True
                                 pw_cookies.append(pw_cookie)
                             await context.add_cookies(pw_cookies)
                     except Exception as e:
@@ -785,3 +869,13 @@ def yarl_url(url_str: str):
     """Create a yarl.URL for aiohttp cookie jar context."""
     from yarl import URL
     return URL(url_str)
+
+
+def _int(value) -> int:
+    """Safely convert a value to int."""
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return 0
