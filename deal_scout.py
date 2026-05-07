@@ -19,10 +19,18 @@ from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 
 # Fix Unicode output on Windows consoles (PowerShell, cmd)
+# Must run before any library creates a StreamHandler
 if sys.platform == "win32":
-    for stream in (sys.stdout, sys.stderr):
+    import io
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name)
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
+        elif not isinstance(stream, io.TextIOWrapper) or stream.encoding != "utf-8":
+            # Fallback: wrap the stream
+            setattr(sys, stream_name, io.TextIOWrapper(
+                stream.buffer, encoding="utf-8", errors="replace", line_buffering=True
+            ))
 
 import yaml
 import discord
@@ -68,6 +76,13 @@ def setup_logging():
     root.setLevel(logging.DEBUG)
     root.addHandler(console)
     root.addHandler(file_handler)
+
+    # Also route discord.py logs through our UTF-8 handler
+    discord_logger = logging.getLogger("discord")
+    discord_logger.setLevel(logging.INFO)
+    discord_logger.handlers.clear()
+    discord_logger.addHandler(console)
+    discord_logger.addHandler(file_handler)
 
     return root
 
