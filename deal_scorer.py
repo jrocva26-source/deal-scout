@@ -329,15 +329,28 @@ class DealScorer:
         }
 
     def _get_percent_off(self, deal, mapper):
-        if mapper and mapper.stores:
-            pcts = [s.percent_off for s in mapper.stores if s.percent_off]
-            if pcts:
-                return max(pcts)
+        """Get percent off using the CLOSEST store's actual price, not the post."""
+        if mapper and mapper.closest_store:
+            store = mapper.closest_store
+            # Use the store's reported percent_off if available
+            if store.percent_off:
+                return store.percent_off
+            # Otherwise calculate from closest store price vs MSRP
+            msrp = mapper.msrp or deal.msrp
+            price = store.in_store_price
+            if price and msrp and msrp > 0 and price < msrp:
+                return ((msrp - price) / msrp) * 100
+        # No mapper data — fall back to post
         if deal.calculated_percent_off is not None:
             return deal.calculated_percent_off
         return deal.percent_off
 
     def _get_sale_price(self, deal, mapper):
+        """Get sale price from the CLOSEST store, not best price across all stores."""
+        if mapper and mapper.closest_store:
+            price = mapper.closest_store.in_store_price
+            if price is not None:
+                return price
         if mapper and mapper.best_price is not None:
             return mapper.best_price
         return deal.sale_price

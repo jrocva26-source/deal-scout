@@ -13,8 +13,12 @@ discord:
   token: ""
 
   # Your Discord user ID (right-click yourself > Copy User ID)
-  # The bot DMs YOU here
   my_user_id: ""
+
+  # Webhook URL for alerts (create one in a private channel:
+  # Channel Settings > Integrations > Webhooks > New Webhook > Copy URL)
+  # If set, alerts go here instead of DMs (recommended — DMs don't work for self-bots)
+  webhook_url: ""
 
   # Profit Lounge server ID
   # Right-click the server icon > Copy Server ID

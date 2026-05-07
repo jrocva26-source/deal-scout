@@ -126,6 +126,7 @@ class DealScoutBot(discord.Client):
         self.discord_config = config["discord"]
         self.server_id = int(self.discord_config["server_id"])
         self.my_user_id = int(self.discord_config["my_user_id"])
+        self.webhook_url = self.discord_config.get("webhook_url", "").strip()
 
         # Channel detection
         self.watch_channel_ids = set()
@@ -394,8 +395,35 @@ class DealScoutBot(discord.Client):
 
         logger.info(f"Added to watchlist: {product_name}")
 
+    async def _send_message(self, message: str):
+        """Send a message via webhook (preferred) or DM fallback."""
+        if len(message) > 2000:
+            message = message[:1997] + "..."
+
+        # Webhook — reliable, no self-DM issues
+        if self.webhook_url:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                payload = {"content": message, "username": "Deal Scout"}
+                async with session.post(self.webhook_url, json=payload) as resp:
+                    if resp.status in (200, 204):
+                        return True
+                    else:
+                        body = await resp.text()
+                        logger.error(f"Webhook failed ({resp.status}): {body}")
+                        return False
+
+        # DM fallback (won't work for self-bots sending to themselves)
+        try:
+            me = await self.fetch_user(self.my_user_id)
+            await me.send(message)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send message: {e}")
+            return False
+
     async def _send_alert(self, message: str, sku_key: str):
-        """Send a DM alert, respecting quiet hours."""
+        """Send a deal alert, respecting quiet hours."""
         if self._is_quiet_hours():
             queue_enabled = self.config.get("alerts", {}).get("quiet_hours", {}).get("queue_during_quiet", True)
             if queue_enabled:
@@ -405,16 +433,10 @@ class DealScoutBot(discord.Client):
             else:
                 return
 
-        try:
-            me = await self.fetch_user(self.my_user_id)
-            # Split long messages
-            if len(message) > 2000:
-                message = message[:1997] + "..."
-            await me.send(message)
+        sent = await self._send_message(message)
+        if sent:
             await self.db.record_alert(sku_key)
             logger.debug("Alert sent")
-        except Exception as e:
-            logger.error(f"Failed to send alert: {e}")
 
     async def _flush_alert_queue(self):
         """Send all queued alerts from quiet hours."""
@@ -422,23 +444,20 @@ class DealScoutBot(discord.Client):
             return
 
         logger.info(f"Flushing {len(self.alert_queue)} queued alerts")
-        try:
-            me = await self.fetch_user(self.my_user_id)
-            await me.send(f"🌅 **Good morning!** {len(self.alert_queue)} deals came in overnight:\n")
+        await self._send_message(
+            f"🌅 **Good morning!** {len(self.alert_queue)} deals came in overnight:"
+        )
 
-            for alert in self.alert_queue[:20]:  # Cap at 20
-                if len(alert) > 2000:
-                    alert = alert[:1997] + "..."
-                await me.send(alert)
-                await asyncio.sleep(1)  # Rate limit
+        for alert in self.alert_queue[:20]:  # Cap at 20
+            await self._send_message(alert)
+            await asyncio.sleep(1)  # Rate limit
 
-            if len(self.alert_queue) > 20:
-                await me.send(f"... and {len(self.alert_queue) - 20} more. Check the digest!")
+        if len(self.alert_queue) > 20:
+            await self._send_message(
+                f"... and {len(self.alert_queue) - 20} more. Check the digest!"
+            )
 
-        except Exception as e:
-            logger.error(f"Failed to flush queue: {e}")
-        finally:
-            self.alert_queue.clear()
+        self.alert_queue.clear()
 
     async def _send_digest(self):
         """Send a scheduled deal digest."""
@@ -447,13 +466,11 @@ class DealScoutBot(discord.Client):
         deals = await self.db.get_recent_deals(hours=lookback, min_score=min_score)
 
         message = format_digest(deals, f"in the last {lookback} hours")
-
-        try:
-            me = await self.fetch_user(self.my_user_id)
-            await me.send(message)
+        sent = await self._send_message(message)
+        if sent:
             logger.info(f"Digest sent: {len(deals)} deals")
-        except Exception as e:
-            logger.error(f"Failed to send digest: {e}")
+        else:
+            logger.error("Failed to send digest")
 
     async def _check_watchlist(self):
         """Re-check inventory for watchlisted deals."""
@@ -519,27 +536,19 @@ class DealScoutBot(discord.Client):
             return
 
         logger.warning("Profit Mapper session expired — attempting auto-reauth...")
-        try:
-            me = await self.fetch_user(self.my_user_id)
-            await me.send("⚠️ **Deal Scout**: Session expired. Attempting auto-reauth...")
-        except Exception:
-            pass
+        await self._send_message("⚠️ **Deal Scout**: Session expired. Attempting auto-reauth...")
 
         success = await self.mapper.auto_reauthenticate()
 
-        try:
-            me = await self.fetch_user(self.my_user_id)
-            if success:
-                logger.info("Auto-reauthentication successful!")
-                await me.send("✅ **Deal Scout**: Auto-reauth successful! Back online.")
-            else:
-                logger.warning("Auto-reauthentication failed — manual login needed")
-                await me.send(
-                    "❌ **Deal Scout**: Auto-reauth failed. Manual login needed:\n"
-                    "```python deal_scout.py --login```"
-                )
-        except Exception:
-            pass
+        if success:
+            logger.info("Auto-reauthentication successful!")
+            await self._send_message("✅ **Deal Scout**: Auto-reauth successful! Back online.")
+        else:
+            logger.warning("Auto-reauthentication failed — manual login needed")
+            await self._send_message(
+                "❌ **Deal Scout**: Auto-reauth failed. Manual login needed:\n"
+                "```python deal_scout.py --login```"
+            )
 
     async def _daily_cleanup(self):
         """Daily maintenance tasks."""

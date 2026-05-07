@@ -57,23 +57,45 @@ class MapperResult:
     error: Optional[str] = None
 
     @property
+    def discounted_stores(self) -> list:
+        """Stores that actually have a deal — price is meaningfully below MSRP."""
+        if not self.msrp or self.msrp <= 0:
+            # No MSRP to compare against — fall back to all stocked stores
+            return [s for s in self.stores if s.quantity > 0]
+        threshold = self.msrp * 0.90  # At least 10% off to count as a deal
+        result = []
+        for s in self.stores:
+            if s.quantity <= 0:
+                continue
+            if s.in_store_price is not None and s.in_store_price < threshold:
+                result.append(s)
+            elif s.in_store_price is None:
+                # No price data — include it (might be clearance)
+                result.append(s)
+        return result
+
+    @property
     def has_local_stock(self) -> bool:
-        return len(self.stores) > 0 and any(s.quantity > 0 for s in self.stores)
+        """True only if stores nearby have discounted stock (not full price)."""
+        return len(self.discounted_stores) > 0
 
     @property
     def closest_store(self) -> Optional[StoreInventory]:
-        stocked = [s for s in self.stores if s.quantity > 0]
+        """Closest store with discounted stock."""
+        stocked = self.discounted_stores
         if not stocked:
             return None
         return min(stocked, key=lambda s: s.distance_miles or 999)
 
     @property
     def total_nearby_stock(self) -> int:
-        return sum(s.quantity for s in self.stores)
+        """Total quantity across stores with actual deals."""
+        return sum(s.quantity for s in self.discounted_stores)
 
     @property
     def best_price(self) -> Optional[float]:
-        prices = [s.in_store_price for s in self.stores if s.in_store_price]
+        """Lowest price across discounted stores."""
+        prices = [s.in_store_price for s in self.discounted_stores if s.in_store_price]
         return min(prices) if prices else None
 
 
