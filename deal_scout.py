@@ -10,27 +10,36 @@ Usage:
     python deal_scout.py --test       # Test with a sample message
 """
 
+import io
+import os
+import sys
+
+# Force UTF-8 on Windows. reconfigure() changes the encoding on the
+# existing stream object so all handlers (including ones created later
+# by libraries) inherit the fix.
+if sys.platform == "win32":
+    for _name in ("stdout", "stderr"):
+        _s = getattr(sys, _name, None)
+        if _s and hasattr(_s, "reconfigure"):
+            try:
+                _s.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+        if _s and hasattr(_s, "encoding") and _s.encoding != "utf-8":
+            # reconfigure didn't stick (e.g. redirected pipe) — wrap it
+            setattr(sys, _name, io.TextIOWrapper(
+                _s.buffer, encoding="utf-8", errors="replace",
+                line_buffering=True,
+            ))
+    # Also patch logging's last-resort handler
+    import logging as _logging
+    _logging.lastResort = _logging.StreamHandler(sys.stderr)
+
 import asyncio
 import argparse
 import logging
-import os
-import sys
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
-
-# Fix Unicode output on Windows consoles (PowerShell, cmd)
-# Must run before any library creates a StreamHandler
-if sys.platform == "win32":
-    import io
-    for stream_name in ("stdout", "stderr"):
-        stream = getattr(sys, stream_name)
-        if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", errors="replace")
-        elif not isinstance(stream, io.TextIOWrapper) or stream.encoding != "utf-8":
-            # Fallback: wrap the stream
-            setattr(sys, stream_name, io.TextIOWrapper(
-                stream.buffer, encoding="utf-8", errors="replace", line_buffering=True
-            ))
 
 import yaml
 import discord
@@ -48,13 +57,30 @@ with open("config.yaml", "r") as f:
     CONFIG = yaml.safe_load(f)
 
 
+class SafeStreamHandler(logging.StreamHandler):
+    """StreamHandler that replaces unencodable characters instead of crashing."""
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            stream = self.stream
+            try:
+                stream.write(msg + self.terminator)
+            except UnicodeEncodeError:
+                # Fall back to ASCII-safe version
+                safe_msg = msg.encode("ascii", errors="replace").decode("ascii")
+                stream.write(safe_msg + self.terminator)
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
+
 def setup_logging():
     """Configure logging."""
     log_config = CONFIG.get("logging", {})
     level = getattr(logging, log_config.get("level", "INFO"))
 
-    # Console handler with UTF-8 safe encoding
-    console = logging.StreamHandler(stream=sys.stdout)
+    # Console handler with safe encoding (Windows cp1252 can't handle Unicode emoji/symbols)
+    console = SafeStreamHandler(stream=sys.stdout)
     console.setLevel(level)
     console_fmt = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -578,7 +604,7 @@ def main():
     """)
 
     bot = DealScoutBot(CONFIG)
-    bot.run(token)
+    bot.run(token, log_handler=None)
 
 
 if __name__ == "__main__":
