@@ -1,0 +1,188 @@
+# ============================================================
+# Deal Scout - Configuration
+# ============================================================
+# Copy this file to config.yaml and fill in your credentials:
+#   cp config.example.yaml config.yaml
+#
+# NEVER commit config.yaml — it contains your Discord token.
+
+discord:
+  # Your Discord user token (NOT a bot token)
+  # How to get it: Open Discord in browser > F12 > Network tab >
+  # Click any request > look for "Authorization" header
+  token: ""
+
+  # Your Discord user ID (right-click yourself > Copy User ID)
+  # The bot DMs YOU here
+  my_user_id: ""
+
+  # Profit Lounge server ID
+  # Right-click the server icon > Copy Server ID
+  server_id: ""
+
+  # Channels to monitor - leave empty to monitor ALL deal channels
+  # Or list specific channel IDs to watch only those
+  # The bot auto-detects deal channels by name patterns, but you
+  # can override here if needed
+  watch_channels: []
+
+  # Channel name patterns to auto-detect as deal channels
+  # The bot watches any channel whose name contains these
+  deal_channel_patterns:
+    - "staff-deals"
+    - "member-deals"
+    - "member-finds"
+    - "major-deals"
+    - "flips"
+    - "card-drops"
+    - "zip-deals"
+    - "instore"
+    - "online"
+    - "penny"
+    - "in-store-leads"
+    - "scav-exclusives"
+    - "misc-discounts"
+    - "freebies"
+    - "spotlight"
+    - "deals-by-"
+
+# Profit Mapper settings
+profit_mapper:
+  base_url: "https://profit-mapper.com"
+  zip_code: "32259"
+  radius_miles: 50
+  # Session refresh - bot will notify you when login expires
+  session_check_interval_minutes: 30
+
+# Deal scoring & filtering
+filters:
+  # Minimum percent off to even consider (hard cutoff)
+  min_percent_off: 55
+  # Maximum distance in miles to nearest store with stock (standard deals)
+  max_distance_miles: 50
+  # For big-ticket items (trailers, mowers, UTVs, $300+ margin items),
+  # distance extends automatically up to 150mi — configured in scorer logic
+  max_buy_price: 2500
+  # Minimum quantity in stock (at nearest store)
+  min_quantity: 1
+
+  # Minimum profit per unit to alert ($)
+  # Skips small flips where you'd make <$25 each
+  min_profit_per_unit: 25
+
+  # Minimum "deal value" (profit × quantity) to alert
+  # Example: 2 units × $20 profit = $40 total → skip
+  # Example: 15 units × $30 profit = $450 total → alert
+  min_total_deal_value: 50
+
+  # Score thresholds for alert tiers
+  # 🔥 HOT = score >= hot_threshold
+  # 📊 SOLID = score >= solid_threshold
+  # Below solid_threshold = no alert
+  hot_threshold: 70
+  solid_threshold: 45
+
+  # Scoring weights (must sum to 100)
+  weights:
+    percent_off: 25        # Higher discount = higher score
+    proximity: 20          # Closer store = higher score
+    stock_level: 20        # More stock = higher score (bulk buys)
+    deal_value: 25         # Total profit opportunity (qty × margin)
+    keyword_bonus: 10      # Hot keywords boost score
+
+  # Keywords that boost score
+  hot_keywords:
+    - "clearance"
+    - "penny"
+    - "price error"
+    - "90%"
+    - "95%"
+    - "100%"
+    - "BOGO"
+    - "buy one get one"
+    - "YMMV"
+    - "$0.01"
+    - "$0.03"
+    - "as low as $1"
+    - "as low as $2"
+    - "as low as $3"
+
+  # Keywords to skip entirely
+  ignore_keywords:
+    - "online only"
+
+  # Categories you prefer (boosts score slightly)
+  preferred_categories:
+    - "flooring"
+    - "laminate"
+    - "tile"
+    - "tools"
+    - "power tools"
+    - "electronics"
+    - "apple"
+    - "appliances"
+    - "dewalt"
+    - "milwaukee"
+    - "makita"
+    - "pokemon"
+    - "cards"
+    - "big ticket"
+    - "pallet"
+    - "trailer"
+    - "mower"
+    - "zero turn"
+    - "riding mower"
+    - "utv"
+    - "atv"
+    - "generator"
+    - "tractor"
+    - "hot tub"
+    - "shed"
+    - "grill"
+    - "smoker"
+    - "mini split"
+    - "water heater"
+    - "table saw"
+    - "tool chest"
+
+# Deal Digest - scheduled summary DMs
+digest:
+  enabled: true
+  # Times to send digest (24hr format, Eastern)
+  times:
+    - "07:00"
+    - "12:00"
+    - "18:00"
+  timezone: "America/New_York"
+  # Include deals from the last N hours
+  lookback_hours: 8
+
+# Deal Tracker - watchlist with re-checks
+tracker:
+  enabled: true
+  # React with this emoji to pin a deal to your watchlist
+  pin_emoji: "📌"
+  # How often to re-check pinned deals (minutes)
+  recheck_interval_minutes: 30
+  # Auto-remove from watchlist after N days
+  auto_expire_days: 7
+
+# Alert settings
+alerts:
+  # Quiet hours - no DMs during these times
+  quiet_hours:
+    enabled: true
+    start: "23:00"
+    end: "07:00"
+    timezone: "America/New_York"
+  # Queue alerts during quiet hours and send at end
+  queue_during_quiet: true
+  # Cooldown - don't re-alert same product within N minutes
+  cooldown_minutes: 120
+
+# Logging
+logging:
+  level: "INFO"
+  file: "deal_scout.log"
+  max_size_mb: 10
+  backup_count: 3
