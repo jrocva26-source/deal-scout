@@ -462,18 +462,32 @@ class DealScoutBot(discord.Client):
                 await asyncio.sleep(2)  # Be gentle with mapper
 
     async def _check_mapper_session(self):
-        """Periodically verify Profit Mapper session is alive."""
-        if not await self.mapper.check_session():
-            logger.warning("Profit Mapper session expired!")
-            try:
-                me = await self.fetch_user(self.my_user_id)
+        """Periodically verify Profit Mapper session, auto-reauth if expired."""
+        if await self.mapper.check_session():
+            return
+
+        logger.warning("Profit Mapper session expired — attempting auto-reauth...")
+        try:
+            me = await self.fetch_user(self.my_user_id)
+            await me.send("⚠️ **Deal Scout**: Session expired. Attempting auto-reauth...")
+        except Exception:
+            pass
+
+        success = await self.mapper.auto_reauthenticate()
+
+        try:
+            me = await self.fetch_user(self.my_user_id)
+            if success:
+                logger.info("Auto-reauthentication successful!")
+                await me.send("✅ **Deal Scout**: Auto-reauth successful! Back online.")
+            else:
+                logger.warning("Auto-reauthentication failed — manual login needed")
                 await me.send(
-                    "⚠️ **Deal Scout**: Profit Mapper session expired. "
-                    "Inventory checks are paused. Run:\n"
+                    "❌ **Deal Scout**: Auto-reauth failed. Manual login needed:\n"
                     "```python deal_scout.py --login```"
                 )
-            except Exception:
-                pass
+        except Exception:
+            pass
 
     async def _daily_cleanup(self):
         """Daily maintenance tasks."""

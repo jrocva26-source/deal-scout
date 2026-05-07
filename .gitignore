@@ -1,6 +1,7 @@
 # Secrets - NEVER commit these
 config.yaml
 mapper_session.json
+discord_cookies.json
 
 # Database
 *.db
