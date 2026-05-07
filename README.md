@@ -65,8 +65,13 @@ It only **reads** deal channels and **DMs you** via your own account.
 
 ### 1. Clone & install
 ```bash
-git clone https://github.com/YOUR_USERNAME/deal-scout.git
+git clone https://github.com/jrocva26-source/deal-scout.git
 cd deal-scout
+python -m venv venv
+# Windows:
+.\venv\Scripts\Activate
+# macOS/Linux:
+# source venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 ```
