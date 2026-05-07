@@ -108,6 +108,12 @@ filters:
   # Keywords to skip entirely
   ignore_keywords:
     - "online only"
+    - "paint"
+    - "primer"
+    - "stain"
+    - "Glidden"
+    - "Behr"
+    - "PPG"
 
   # Categories you prefer (boosts score slightly)
   preferred_categories:

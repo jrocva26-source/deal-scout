@@ -48,7 +48,7 @@ class DealScorer:
         self.preferred_categories = [c.lower() for c in filters.get("preferred_categories", [])]
 
     def should_ignore(self, deal: ParsedDeal) -> bool:
-        text_lower = deal.raw_content.lower()
+        text_lower = f"{deal.raw_content} {deal.product_name}".lower()
         for keyword in self.ignore_keywords:
             if keyword in text_lower:
                 return True

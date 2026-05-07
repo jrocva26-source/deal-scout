@@ -375,7 +375,7 @@ class ProfitMapperClient:
         api_url = (
             f"{self.base_url}/api/crawler/stores/crawl"
             f"?sourceCode={source_code}&productId={product_id}"
-            f"&radius={self.radius}&v=1"
+            f"&radius={self.radius}&zipCode={self.zip_code}&v=1"
         )
 
         try:
@@ -393,6 +393,9 @@ class ProfitMapperClient:
                     return result
 
                 data = await resp.json()
+                if data is None:
+                    result.error = "Product not found on Profit Mapper"
+                    return result
                 return self._parse_crawl_api(data, mapper_url)
 
         except asyncio.TimeoutError:
@@ -429,7 +432,7 @@ class ProfitMapperClient:
                 in_store_price=s.get("price", s.get("inStorePrice")),
                 msrp=s.get("msrp"),
                 percent_off=s.get("percentOff", s.get("discount")),
-                distance_miles=s.get("distance", s.get("distanceMiles")),
+                distance_miles=_distance_to_miles(s.get("distance", s.get("distanceMiles"))),
                 pickup_available=s.get("pickupAvailable", s.get("bopusEligible", False)),
                 aisle_bay=s.get("aisle", s.get("bay", s.get("location", ""))),
             )
@@ -481,3 +484,18 @@ def _int(value) -> int:
         return int(value)
     except (ValueError, TypeError):
         return 0
+
+
+def _distance_to_miles(value) -> Optional[float]:
+    """Convert distance from API (meters) to miles."""
+    if value is None:
+        return None
+    try:
+        meters = float(value)
+        # API returns meters — convert to miles
+        # (values > 500 are almost certainly meters, not miles)
+        if meters > 500:
+            return round(meters / 1609.34, 1)
+        return round(meters, 1)  # Already in miles
+    except (ValueError, TypeError):
+        return None

@@ -8,6 +8,7 @@ discord_cookies.json
 
 # Logs
 *.log
+*_stdout.log
 
 # Python
 __pycache__/
